@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # root build script: writes build.ninja for the native ports (Linux, Windows,
-# Android, macOS) and the dedicated server (Linux)
+# Android, macOS), the dedicated server (Linux) and Halo 64 Link (Linux)
 
 import argparse
 import io
@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from tools import ninja_syntax
 from tools.android_build import android_configure_inputs, generate_android_build
 from tools.android64_build import android64_configure_inputs, generate_android64_build
+from tools.link_build import generate_link_build, link_configure_inputs
 from tools.linux_build import generate_linux_build, linux_configure_inputs
 from tools.linux64_build import generate_linux64_build, linux64_configure_inputs
 from tools.macos_build import generate_macos_build, macos_configure_inputs
@@ -134,6 +135,8 @@ generate_android64_build(n, sln)
 generate_windows_build(n, sln)
 generate_macos_build(n, sln)
 generate_server_build(n, sln)
+# Halo 64 Link, the Nintendo 64 port's computer side (link/README.md)
+generate_link_build(n, sln)
 
 n.comment("Reconfigure on change")
 n.rule(
@@ -155,6 +158,7 @@ n.build(
         *windows_configure_inputs(),
         *macos_configure_inputs(),
         *server_configure_inputs(),
+        *link_configure_inputs(),
         # (the commit the builds record: tools/version.py)
         *commit_inputs(),
     ],

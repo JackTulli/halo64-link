@@ -32,6 +32,9 @@ HALO_BUILD_FLAVOR.
 
 #ifdef HALO_SERVER
 #define BUILD_IDENTITY_NAME "ChupathingyCE Dedicated Server"
+#elif defined(HALO_LINK)
+/* (the Nintendo 64 port's computer side: link/README.md) */
+#define BUILD_IDENTITY_NAME "Halo 64 Link"
 #else
 #define BUILD_IDENTITY_NAME "ChupathingyCE"
 #endif
