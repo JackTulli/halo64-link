@@ -27,10 +27,16 @@ again (or awaited) every RETRY_SECONDS.
 #include <unistd.h>
 
 #define RETRY_SECONDS 2.0
-#define LINK_SILENCE_SECONDS 5.0
+/* (an N64 loading its own game of the map says nothing for a while) */
+#define LINK_SILENCE_SECONDS 40.0
+/* a gap this long between two updates is the Link's own (a map loading holds
+the main loop): what the N64 said meanwhile is still to be read */
+#define STALL_SECONDS 1.0
 #define STATUS_SECONDS 1.0
 #define REQUEST_QUEUE 16
 #define CONTROLLER_PORTS 4
+/* the N64's controls kept (a tick each: half a second) */
+#define CONTROL_QUEUE 16
 /* the most of the stream kept unread: a whole packet and its framing */
 #define STREAM_SIZE (2 * (LINK_CABLE_HEADER_SIZE + LINK_CABLE_PAYLOAD_MAXIMUM + 16))
 
@@ -40,14 +46,19 @@ static struct
 	char host[64];
 	int port;
 	int listener, sock;
-	double next_try, last_heard, last_status;
+	double next_try, last_heard, last_status, last_update;
 	int hello;
 	unsigned short sequence;
 	char status[128];
 	unsigned char stream[STREAM_SIZE];
 	int stream_length;
+	unsigned long inputs;
 	struct link_cable_request requests[REQUEST_QUEUE];
 	int request_first, request_count;
+	unsigned char controls[CONTROL_QUEUE][LINK_CABLE_CONTROL_SIZE];
+	int control_first, control_count;
+	char name[16];
+	unsigned long names;
 	struct
 	{
 		int present;
@@ -135,6 +146,7 @@ static void disconnect(const char *why)
 	}
 	cable.hello = 0;
 	cable.stream_length = 0;
+	cable.control_count = 0;
 	memset(cable.controllers, 0, sizeof(cable.controllers));
 }
 
@@ -274,6 +286,7 @@ static void take_input(const unsigned char *at, int length)
 
 	if (length < 5)
 		return;
+	cable.inputs++;
 	count = at[4];
 	at += 5;
 	length -= 5;
@@ -320,6 +333,39 @@ static void handle(const unsigned char *packet, int size)
 		break;
 	case LINK_CABLE_INPUT:
 		take_input(packet + LINK_CABLE_HEADER_SIZE, length);
+		break;
+	case LINK_CABLE_NAME:
+		/* (a string: its length (1), its bytes) */
+		if (length >= 1 && packet[LINK_CABLE_HEADER_SIZE] < length)
+		{
+			int size = packet[LINK_CABLE_HEADER_SIZE], i;
+
+			if (size > (int)sizeof(cable.name) - 1)
+				size = (int)sizeof(cable.name) - 1;
+			for (i = 0; i < size; i++)
+			{
+				char c = (char)packet[LINK_CABLE_HEADER_SIZE + 1 + i];
+
+				cable.name[i] = c >= ' ' && c <= '~' ? c : '?';
+			}
+			cable.name[size] = 0;
+			cable.names++;
+			cable_log("link: the N64's player is named \"%s\"", cable.name);
+		}
+		break;
+	case LINK_CABLE_CONTROL:
+		if (length >= LINK_CABLE_CONTROL_SIZE)
+		{
+			/* (full: the oldest dropped) */
+			if (cable.control_count == CONTROL_QUEUE)
+			{
+				cable.control_first = (cable.control_first + 1) % CONTROL_QUEUE;
+				cable.control_count--;
+			}
+			memcpy(cable.controls[(cable.control_first + cable.control_count) % CONTROL_QUEUE],
+				packet + LINK_CABLE_HEADER_SIZE, LINK_CABLE_CONTROL_SIZE);
+			cable.control_count++;
+		}
 		break;
 	case LINK_CABLE_LIST:
 	case LINK_CABLE_JOIN:
@@ -369,9 +415,15 @@ static void parse(void)
 			at += 4;
 			continue;
 		}
-		if (left < 8 + padded + 4)
+		if (left < 8 + size + 4)
 			break;
-		if (memcmp(cable.stream + at + 8 + padded, "CMPH", 4))
+		/* ("CMPH" right after the data: the N64's on the EverDrive, its pad
+		byte after it, passed over by the next search; else after the pad) */
+		if (!memcmp(cable.stream + at + 8 + size, "CMPH", 4))
+			padded = size;
+		else if (left < 8 + padded + 4)
+			break;
+		else if (memcmp(cable.stream + at + 8 + padded, "CMPH", 4))
 		{
 			at += 4;
 			continue;
@@ -394,6 +446,9 @@ void link_cable_update(void)
 		configure();
 	if (!cable.port)
 		return;
+	if (cable.last_update > 0.0 && now - cable.last_update > STALL_SECONDS)
+		cable.last_heard = now;
+	cable.last_update = now;
 	if (cable.sock < 0)
 	{
 		try_connect(now);
@@ -432,6 +487,11 @@ void link_cable_update(void)
 		link_cable_status(cable.status);
 }
 
+unsigned long link_cable_input_count(void)
+{
+	return cable.inputs;
+}
+
 int link_cable_connected(void)
 {
 	return cable.sock >= 0 && cable.hello;
@@ -444,6 +504,27 @@ int link_cable_take_request(struct link_cable_request *request)
 	*request = cable.requests[cable.request_first];
 	cable.request_first = (cable.request_first + 1) % REQUEST_QUEUE;
 	cable.request_count--;
+	return 1;
+}
+
+unsigned long link_cable_name(char *name, int size)
+{
+	snprintf(name, (size_t)size, "%s", cable.name);
+	return cable.names;
+}
+
+int link_cable_controls_queued(void)
+{
+	return cable.control_count;
+}
+
+int link_cable_take_control(unsigned char record[LINK_CABLE_CONTROL_SIZE])
+{
+	if (!cable.control_count)
+		return 0;
+	memcpy(record, cable.controls[cable.control_first], LINK_CABLE_CONTROL_SIZE);
+	cable.control_first = (cable.control_first + 1) % CONTROL_QUEUE;
+	cable.control_count--;
 	return 1;
 }
 

@@ -795,6 +795,15 @@ static void handle_one_player_input(
 	player->control_flags = input.unit_control_flags;
 	player->throttle = input.throttle;
 	player->primary_trigger = input.primary_trigger;
+#ifdef HALO_LINK
+	{
+		/* (Halo 64 Link: the Nintendo 64's control of the tick, played here as
+		it was there, port/linux/game/link_control.c) */
+		extern void link_control_apply(short local_player_index, struct player_control *player);
+
+		link_control_apply(local_player_index, player);
+	}
+#endif
 	match_assert_valid_real(
 		"c:\\halo\\SOURCE\\game\\player_control.c",
 		0x351,

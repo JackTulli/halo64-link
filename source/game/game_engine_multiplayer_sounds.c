@@ -152,6 +152,16 @@ static void _game_engine_play_multiplayer_sound(
 	struct game_globals_multiplayer_information *multiplayer_information;
 	struct tag_reference *sound;
 
+#ifdef HALO_LINK
+	{
+		/* (Halo 64 Link: the announcer to the Nintendo 64 too,
+		port/linux/game/link_export.c) */
+		extern void link_export_announcer(long sound_index);
+
+		link_export_announcer(sound_index);
+	}
+#endif
+
 	global_scenario_get();
 	game_globals = (struct game_globals_multiplayer_sound_view *)scenario_get_game_globals();
 	multiplayer_information = TAG_BLOCK_GET_ELEMENT(

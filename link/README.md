@@ -9,9 +9,12 @@ but as a **client**: a player's machine that joins (and later hosts) games
 as a player's copy of the game does. Its players will be the N64's
 controllers, and after each tick it will send the N64 what to draw.
 
-This first stage is the headless client: it joins a system link game,
-spawns its player and plays it with port 1's controller from a scripted
-source.
+It works now (October 2026): the N64 cartridge (halo-64's
+`halo-online.z64`) lists the internet's and the local network's games
+through the Link, joins one, and plays it -- in ares with an emulated
+flashcart USB port (`link/ares/`), or on a real SummerCart64 through a small
+bridge (`link/sc64/`). "Playing on the N64" below says how the two share the
+work.
 
 ## Building
 
@@ -102,8 +105,8 @@ from the same version) local-only: nothing listed, no invites, no reports.
 the first, adds its player and picks a team) and port 1 walking:
 
 ```sh
-link/run-local-server.sh > server.log 2>&1 &   # data: /root/n64/online/server-data
-link/run-local.sh > link.log 2>&1 &            # data: /root/n64/online/link-data
+HALO_SERVER_DATA=~/server-data link/run-local-server.sh > server.log 2>&1 &
+HALO_LINK_MAPS=~/halo-64/build/xbox/disc/maps link/run-local.sh > link.log 2>&1 &
 ```
 
 Both run on one machine by playing from different loopback addresses: the
@@ -131,10 +134,60 @@ profile). It used about 8% of one core and 110 MB. With
 `HALO_LINK_INPUT=pipe:` the player walked while a line held `ly=32000`,
 stopped on an empty line and turned with `rx=20000`.
 
-## The next stage: where to hook in
+## Playing on the N64
 
-What `link_export.c` (the frame packet), `link_control.c` (the N64's menu
-requests) and `link_usb.c` (the cable) will need, located in v0.7.5d:
+The N64 is wired to the computer by its flashcart's USB port (or ares'
+emulated one): `link/platform/link_cable.c` speaks UNFLoader's USB framing
+over TCP (`HALO_LINK_CABLE=listen:<port>` waits for ares' `connect:` mode or
+the SummerCart64 bridge; `tcp:<host>:<port>` connects to ares' listening
+mode). The protocol (version 2) is halo-64's `port/n64/src/n64_link.h`.
+
+- **The menus** (`port/linux/game/link_director.c`): the N64's ONLINE screen
+  asks for the games (LIST): the local network's, then halo.milenko.org's
+  (`browser_get_games`), sent again whenever they change; JOIN joins one
+  (an internet game through its invite); the lobby's players and the
+  game's scores go to the N64 once a second (SCORES); when the game's map
+  is loaded here the N64 is told to load it (LOAD); ENDED when it is over.
+  The player's name is the one the N64 sends (NAME), put in the player's
+  profile (`player_ui_link_set_player_name`).
+- **The player's own unit is the N64's to play**: the cartridge plays a
+  game of its own on the map, its player's unit moving, aiming and firing at
+  once, and sends each tick's control (CONTROL: facing, throttle, trigger,
+  buttons, weapon, grenade, zoom). `port/linux/game/link_control.c` plays
+  exactly that control as the Link's player's (in `player_control.c`'s
+  `handle_one_player_input`), a tick at a time, so both games move the unit
+  alike; each frame says which N64 tick the Link last played and the
+  unit's state (position, velocity, facing, health, weapons, rounds), and
+  the N64 corrects its own by it.
+- **Everything else is drawn from the Link's frames**
+  (`port/linux/game/link_export.c`), one each time the N64 has drawn one:
+  the views, the other objects (model, regions, nodes), and what happens --
+  the effects begun with their sounds, the other sounds and the announcer,
+  the hits the player takes, the game's HUD messages, and each frame the
+  HUD's view of the game (the crosshair's target, the state message, the
+  goals, the motion sensor's blips). The N64's own player's effects and
+  sounds are left out: its own game makes them.
+
+Running it all on one Linux (or WSL) computer, for an emulated N64: build
+the Link (above) and the server (`ninja server-x86`), build ares with
+`link/ares/ares-usb.patch`, then
+
+```sh
+HALO_LINK_CABLE=listen:6466 HALO_LINK_INPUT=idle HALO_NETWORK_TEST= \
+	HALO_LINK_MAPS=~/halo-64/build/xbox/disc/maps link/run-local.sh &
+ARES_N64_USB=connect:127.0.0.1:6466 ares --system "Nintendo 64" halo-online.z64
+```
+
+For internet games run the Link with `HALO_NET_ONLINE=true` and without
+`HALO_NET_ADDRESS`/`HALO_NET_BROADCAST` (the game must play from the
+machine's own address); turn off what a player's machine would publish or
+report (`HALO_NET_LIST_GAMES=false HALO_NET_REPORT_GAMES=false
+HALO_NET_REPORT_EVENTS=false HALO_NET_ALLOW_UPNP=false`).
+
+## Where the Link hooks into the game
+
+Where `link_export.c`, `link_control.c`, `link_director.c` and
+`link_cable.c` found what they needed, located in v0.7.5d:
 
 - **Once per tick, after the simulation.** `source/game/game_time.c:475`
   runs `game_tick()` for each tick due, then `render_interpolation_tick()`

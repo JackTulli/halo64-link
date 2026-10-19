@@ -1,0 +1,717 @@
+diff --git a/ares/n64/CMakeLists.txt b/ares/n64/CMakeLists.txt
+index af11a24..57ee1a1 100644
+--- a/ares/n64/CMakeLists.txt
++++ b/ares/n64/CMakeLists.txt
+@@ -26,6 +26,13 @@ ares_add_sources(
+     aleck64/aleck64.cpp
+ )
+ 
++# EverDrive USB bridge sockets: compiled on their own (outside the unity file and
++# the precompiled header) so the platform socket headers stay out of the core
++target_sources(ares PRIVATE cartridge/everdrive-socket.cpp)
++set_source_files_properties(
++  cartridge/everdrive-socket.cpp TARGET_DIRECTORY ares PROPERTIES SKIP_PRECOMPILE_HEADERS ON
++)
++
+ target_enable_feature(ares "N64 Vulkan rendering with paraLLEl-RDP" VULKAN)
+ target_compile_definitions(ares PUBLIC VULKAN)
+ 
+@@ -87,6 +94,7 @@ ares_add_sources(
+     cartridge/debugger.cpp
+     cartridge/flash.cpp
+     cartridge/isviewer.cpp
++    cartridge/everdrive.cpp
+     cartridge/joybus.cpp
+     cartridge/rtc.cpp
+     cartridge/serialization.cpp
+diff --git a/ares/n64/cartridge/cartridge.cpp b/ares/n64/cartridge/cartridge.cpp
+index e461e52..1966f67 100644
+--- a/ares/n64/cartridge/cartridge.cpp
++++ b/ares/n64/cartridge/cartridge.cpp
+@@ -8,6 +8,7 @@ Cartridge& cartridge = cartridgeSlot.cartridge;
+ #include "rtc.cpp"
+ #include "joybus.cpp"
+ #include "isviewer.cpp"
++#include "everdrive.cpp"
+ #include "debugger.cpp"
+ #include "serialization.cpp"
+ 
+@@ -59,6 +60,8 @@ auto Cartridge::connect() -> void {
+   if(ram) pi.attach(ramDevice, 1);
+   if(flash) pi.attach(flash, 1);
+   if(isviewer.enabled()) pi.attach(isviewer, 1);
++  everdrive.load();
++  if(everdrive.enabled()) pi.attach(everdrive, 1);
+ 
+   debugger.load(node);
+ 
+@@ -72,6 +75,8 @@ auto Cartridge::disconnect() -> void {
+   pi.detach(ramDevice);
+   pi.detach(flash);
+   pi.detach(isviewer);
++  pi.detach(everdrive);
++  everdrive.unload();
+   debugger.unload(node);
+   rom.reset();
+   ram.reset();
+@@ -103,6 +108,7 @@ auto Cartridge::save() -> void {
+ auto Cartridge::power(bool reset) -> void {
+   flash.power(reset);
+   isviewer.ram.fill(0);
++  everdrive.power(reset);
+   rtc.power(reset);
+ }
+ 
+diff --git a/ares/n64/cartridge/cartridge.hpp b/ares/n64/cartridge/cartridge.hpp
+index b3cbc28..332c798 100644
+--- a/ares/n64/cartridge/cartridge.hpp
++++ b/ares/n64/cartridge/cartridge.hpp
+@@ -1,3 +1,15 @@
++//everdrive-socket.cpp
++namespace EverDriveSocket {
++  auto listen(const char* host, const char* port) -> std::vector<s64>;
++  auto accept(s64 listener) -> s64;
++  auto connect(const char* host, const char* port, u32 index) -> s64;
++  auto connected(s64 fd) -> s32;
++  auto send(s64 fd, const void* data, u32 size) -> s64;
++  auto recv(s64 fd, void* data, u32 size) -> s64;
++  auto close(s64 fd) -> void;
++  auto milliseconds() -> u64;
++}
++
+ struct Cartridge {
+   Node::Peripheral node;
+   VFS::Pak pak;
+@@ -12,7 +24,7 @@ struct Cartridge {
+       if(address < 0x1000'0000 || address >= 0x1000'0000 + self.rom.size) return false;
+       piView = {self.rom.data, self.rom.size};
+       piViewOffset = address - 0x1000'0000;
+-      piViewWritable = false;
++      piViewWritable = self.everdrive.enabled();  //EverDrive SDRAM
+       return true;
+     }
+   } romDevice{*this};
+@@ -120,6 +132,49 @@ struct Cartridge {
+     auto writeHalf(u32 address, u16 data) -> void;
+   } isviewer;
+ 
++  struct EverDrive : PIDevice {
++    Cartridge& self;
++    EverDrive(Cartridge& self) : self(self) {}
++
++    auto enabled() const -> bool { return !listeners.empty() || outbound; }
++
++    //everdrive.cpp
++    auto load() -> void;
++    auto unload() -> void;
++    auto power(bool reset) -> void;
++    auto service(bool frame = false) -> void;
++    auto piAddress(u32 address, PIDeviceTiming timing) -> bool override;
++    auto piReadHalf(PIDeviceTiming timing) -> maybe<u16> override;
++    auto piWriteHalf(u16 data, PIDeviceTiming timing) -> void override;
++
++  private:
++    auto connectOut() -> void;
++    auto disconnect() -> void;
++    auto receive(const u8* data, u32 size) -> bool;
++    auto transmit(const u8* data, u32 size) -> void;
++    auto step() -> void;
++    auto readRegister(u32 offset) -> u32;
++    auto writeRegister(u32 offset, u32 data) -> void;
++
++    std::vector<s64> listeners;
++    s64 client = -1;
++    bool packets = false;           //UNFLoader packet framing instead of the raw stream
++    bool outbound = false;          //"connect:": ares connects to the PC program instead of listening
++    std::string host, port;         //the address listened on or connected to
++    s64 pending = -1;               //outbound connection being made
++    u32 addressIndex = 0;           //which of host's addresses it is being made to
++    u64 connectStart = 0, connectRetry = 0;  //milliseconds
++    std::vector<u8> rx, tx;         //USB FIFOs: PC to N64, N64 to PC
++    u32 rxHead = 0, txHead = 0;
++    std::vector<u8> inbox, outbox;  //partial packets (outbox: also raw usb.c packets being written)
++    std::vector<u8> sdram;          //SDRAM past the end of the ROM
++
++    bool unlocked = false, active = false, reading = false, piSdram = false;
++    u32 sysConfig = 0, counter = 0, piOffset = 0, readLatch = 0, readLatchOffset = ~0u;
++    u16 writeLatch = 0;
++    u8 buffer[512] = {};
++  } everdrive{*this};
++
+   struct RTC {
+     Cartridge& self;
+     RTC(Cartridge &self) : self(self) {}
+diff --git a/ares/n64/cartridge/everdrive-socket.cpp b/ares/n64/cartridge/everdrive-socket.cpp
+new file mode 100644
+index 0000000..543dbce
+--- /dev/null
++++ b/ares/n64/cartridge/everdrive-socket.cpp
+@@ -0,0 +1,185 @@
++//Non-blocking TCP sockets for the EverDrive USB bridge (everdrive.cpp).
++//
++//A translation unit of its own, without ares or nall headers, so the platform
++//socket headers (Winsock brings "boolean", "small", ...) never meet the N64
++//core's names. Built outside the unity file and the precompiled header.
++
++#if defined(_WIN32)
++  #if !defined(NOMINMAX)
++    #define NOMINMAX
++  #endif
++  #if !defined(WIN32_LEAN_AND_MEAN)
++    #define WIN32_LEAN_AND_MEAN
++  #endif
++  #include <winsock2.h>
++  #include <ws2tcpip.h>
++  #if defined(_MSC_VER)
++    #pragma comment(lib, "ws2_32.lib")
++  #endif
++#else
++  #include <errno.h>
++  #include <fcntl.h>
++  #include <netdb.h>
++  #include <netinet/in.h>
++  #include <netinet/tcp.h>
++  #include <poll.h>
++  #include <sys/socket.h>
++  #include <unistd.h>
++#endif
++#include <stdint.h>
++#include <string.h>
++#include <chrono>
++#include <vector>
++
++#if !defined(MSG_NOSIGNAL)
++  #define MSG_NOSIGNAL 0
++#endif
++
++namespace ares::Nintendo64::EverDriveSocket {
++
++#if defined(_WIN32)
++using Handle = SOCKET;
++static auto valid(Handle s) -> bool { return s != INVALID_SOCKET; }
++static auto wouldBlock() -> bool { return WSAGetLastError() == WSAEWOULDBLOCK; }
++static auto inProgress() -> bool { auto e = WSAGetLastError(); return e == WSAEWOULDBLOCK || e == WSAEINPROGRESS; }
++static auto nonBlocking(Handle s) -> bool { u_long on = 1; return ioctlsocket(s, FIONBIO, &on) == 0; }
++static auto closeHandle(Handle s) -> void { closesocket(s); }
++//nall's main() already starts Winsock in ares; this keeps the file usable on its own
++//(WSAStartup is reference counted, so a second call is harmless)
++static auto startup() -> bool {
++  static bool started = false;
++  if(!started) { WSADATA data; started = WSAStartup(MAKEWORD(2, 2), &data) == 0; }
++  return started;
++}
++#else
++using Handle = int;
++static auto valid(Handle s) -> bool { return s >= 0; }
++static auto wouldBlock() -> bool { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR; }
++static auto inProgress() -> bool { return errno == EINPROGRESS || errno == EINTR; }
++static auto nonBlocking(Handle s) -> bool { return fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK) == 0; }
++static auto closeHandle(Handle s) -> void { ::close(s); }
++static auto startup() -> bool { return true; }
++#endif
++
++//options for a connected socket: no Nagle delay, no SIGPIPE, non-blocking
++static auto prepare(Handle s) -> bool {
++  int one = 1;
++  setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
++  #if defined(SO_NOSIGPIPE)
++  setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, (const char*)&one, sizeof(one));
++  #endif
++  return nonBlocking(s);
++}
++
++//listening sockets for every address host resolves to (localhost: IPv4 and IPv6)
++auto listen(const char* host, const char* port) -> std::vector<int64_t> {
++  std::vector<int64_t> listeners;
++  if(!startup()) return listeners;
++  addrinfo hints;
++  memset(&hints, 0, sizeof(hints));
++  hints.ai_family = AF_UNSPEC;
++  hints.ai_socktype = SOCK_STREAM;
++  hints.ai_flags = AI_PASSIVE;
++  addrinfo* list = nullptr;
++  if(getaddrinfo(host, port, &hints, &list)) return listeners;
++  for(auto ai = list; ai; ai = ai->ai_next) {
++    Handle s = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
++    if(!valid(s)) continue;
++    int one = 1;
++    #if defined(_WIN32)
++    //Windows' SO_REUSEADDR would let another program take the port; ask for it exclusively
++    setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&one, sizeof(one));
++    #else
++    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
++    #endif
++    if(ai->ai_family == AF_INET6) setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&one, sizeof(one));
++    if(::bind(s, ai->ai_addr, (int)ai->ai_addrlen) || ::listen(s, 4) || !nonBlocking(s)) { closeHandle(s); continue; }
++    listeners.push_back((int64_t)s);
++  }
++  freeaddrinfo(list);
++  return listeners;
++}
++
++//a waiting connection, or -1
++auto accept(int64_t listener) -> int64_t {
++  Handle s = ::accept((Handle)listener, nullptr, nullptr);
++  if(!valid(s)) return -1;
++  prepare(s);
++  return (int64_t)s;
++}
++
++//starts a non-blocking connection to the index'th address host resolves to:
++//the socket (connecting; see connected()), -1 if that address failed at once,
++//-2 if there is no such address (every address tried, or host did not resolve)
++auto connect(const char* host, const char* port, uint32_t index) -> int64_t {
++  if(!startup()) return -2;
++  addrinfo hints;
++  memset(&hints, 0, sizeof(hints));
++  hints.ai_family = AF_UNSPEC;
++  hints.ai_socktype = SOCK_STREAM;
++  addrinfo* list = nullptr;
++  if(getaddrinfo(host, port, &hints, &list)) return -2;
++  auto ai = list;
++  for(uint32_t n = 0; ai && n < index; n++) ai = ai->ai_next;
++  int64_t result = -2;
++  if(ai) {
++    result = -1;
++    Handle s = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
++    if(valid(s)) {
++      if(prepare(s) && (::connect(s, ai->ai_addr, (int)ai->ai_addrlen) == 0 || inProgress())) result = (int64_t)s;
++      else closeHandle(s);
++    }
++  }
++  freeaddrinfo(list);
++  return result;
++}
++
++//state of a connection started by connect(): 1 connected, 0 still connecting, -1 failed
++auto connected(int64_t fd) -> int32_t {
++  Handle s = (Handle)fd;
++  #if defined(_WIN32)
++  fd_set writable, failed;
++  FD_ZERO(&writable); FD_SET(s, &writable);
++  FD_ZERO(&failed);   FD_SET(s, &failed);  //Winsock reports a failed connect here
++  timeval zero = {0, 0};
++  if(select(0, nullptr, &writable, &failed, &zero) < 0) return -1;
++  if(FD_ISSET(s, &failed)) return -1;
++  if(!FD_ISSET(s, &writable)) return 0;
++  #else
++  pollfd entry = {s, POLLOUT, 0};
++  auto ready = poll(&entry, 1, 0);
++  if(ready < 0) return errno == EINTR ? 0 : -1;
++  if(ready == 0) return 0;
++  #endif
++  int error = 0;
++  socklen_t length = sizeof(error);
++  if(getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&error, &length) || error) return -1;
++  return 1;
++}
++
++//bytes sent, 0 if the socket buffer is full, -1 if the connection is gone
++auto send(int64_t fd, const void* data, uint32_t size) -> int64_t {
++  auto sent = ::send((Handle)fd, (const char*)data, (int)size, MSG_NOSIGNAL);
++  if(sent >= 0) return sent;
++  return wouldBlock() ? 0 : -1;
++}
++
++//bytes received, 0 if nothing is waiting, -1 if the connection is gone
++auto recv(int64_t fd, void* data, uint32_t size) -> int64_t {
++  auto received = ::recv((Handle)fd, (char*)data, (int)size, 0);
++  if(received > 0) return received;
++  if(received < 0 && wouldBlock()) return 0;
++  return -1;
++}
++
++auto close(int64_t fd) -> void {
++  closeHandle((Handle)fd);
++}
++
++//a monotonic clock for the reconnection timer
++auto milliseconds() -> uint64_t {
++  auto now = std::chrono::steady_clock::now().time_since_epoch();
++  return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
++}
++
++}
+diff --git a/ares/n64/cartridge/everdrive.cpp b/ares/n64/cartridge/everdrive.cpp
+new file mode 100644
+index 0000000..fbd9293
+--- /dev/null
++++ b/ares/n64/cartridge/everdrive.cpp
+@@ -0,0 +1,365 @@
++//EverDrive-64 X7 USB port, bridged to a TCP socket on the PC.
++//
++//Lets ROMs that use UNFLoader's USB library (libdragon's usb.c, N64-NetLib)
++//talk to a PC program as they would through a real flashcart's USB cable.
++//Off unless the ARES_N64_USB environment variable is set:
++//
++//  ARES_N64_USB=tcp:127.0.0.1:6464   raw ED64 USB byte stream ("tcp:", the host
++//                                    and the port are optional; default
++//                                    localhost:6464)
++//  ARES_N64_USB=unfloader            UNFLoader packets on localhost:48646, the
++//                                    port and format of UNFLoader's gopher64
++//                                    device ("unfloader:host:port" also works)
++//  ARES_N64_USB=connect:127.0.0.1:6464  raw stream, but ares connects to a PC
++//                                    program listening there (retried once a
++//                                    second while not connected); for a PC
++//                                    program that cannot reach ares's own port,
++//                                    e.g. one in WSL with ares on Windows
++//
++//raw: the socket carries exactly what the cart's FT245 FIFO puts on the USB
++//cable. With usb.c the N64 sends "DMA@" <type:8 size:24> <data> "CMPH"
++//<pad byte if size is odd>, and the PC must send "DMA@" <type:8 size:24>
++//<data padded to even> "CMPH" (what UNFLoader's EverDrive driver does).
++//unfloader: both directions are <type:32> <size:32> <data>, big endian;
++//type 7 (TCPTEST) is answered by the emulator, type 8 (ROMUPLOAD) is ignored.
++//
++//Registers (as used by usb.c): KEY unlocks the rest, VERSION reads 0xED640013
++//(X7), USB_CFG takes commands and returns status, USB_DAT is the FPGA's
++//512-byte buffer. A transfer moves bytes between the FIFO and the buffer from
++//the latched buffer address up to 512. Like the cart's SDRAM, ROM space is
++//writable (usb.c stages received data at ROM + 0x3800000), and the rest of
++//the 64 MiB window past the end of the ROM is backed by RAM.
++//
++//The socket (everdrive-socket.cpp) is non-blocking and serviced when the N64
++//accesses the port and once per System::run(), so emulation never waits for
++//the PC. One PC at a time; with none connected, data the N64 sends is dropped
++//and there is nothing to read.
++
++namespace {
++  enum : u32 {
++    EDRegUsbCfg  = 0x0004,
++    EDRegVersion = 0x0014,
++    EDRegUsbData = 0x0400,
++    EDRegSysCfg  = 0x8000,
++    EDRegKey     = 0x8004,
++    EDVersionX7  = 0xed64'0013,
++    EDStatusActive  = 0x0200,  //transfer in progress
++    EDStatusRxEmpty = 0x0400,  //RXF#: nothing to read
++    EDStatusTxFull  = 0x0800,  //TXE#: cannot write
++    EDStatusPower   = 0x1000,  //USB cable connected
++    EDFifoLimit = 1 << 20,     //bytes buffered per direction before back-pressure
++  };
++
++  auto edRead32(const u8* p) -> u32 { return p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
++  auto edWrite32(std::vector<u8>& v, u32 n) -> void { u8 b[4] = {u8(n >> 24), u8(n >> 16), u8(n >> 8), u8(n)}; v.insert(v.end(), b, b + 4); }
++}
++
++auto Cartridge::EverDrive::load() -> void {
++  unload();
++  auto env = getenv("ARES_N64_USB");
++  if(!env || !*env) return;
++
++  std::string spec = env;
++  host = "localhost", port = "6464";
++  auto take = [&](const char* prefix) {
++    auto length = strlen(prefix);
++    if(spec.compare(0, length, prefix)) return false;
++    spec.erase(0, length);
++    return true;
++  };
++  packets = take("unfloader");
++  if(packets) port = "48646";
++  else if(take("connect")) outbound = true;
++  else take("tcp");
++  if(!spec.empty() && spec[0] == ':') spec.erase(0, 1);
++  if(!spec.empty()) {
++    auto colon = spec.rfind(':');
++    if(colon == std::string::npos) port = spec;
++    else { if(colon) host = spec.substr(0, colon); port = spec.substr(colon + 1); }
++    if(host.size() > 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
++  }
++
++  if(outbound) {
++    //nothing to set up yet: service() makes the connection and remakes it after a disconnect
++    addressIndex = 0;
++    connectRetry = 0;
++    print("EverDrive USB: connecting to ", host.c_str(), ":", port.c_str(), " (raw ED64 USB stream)\n");
++    return;
++  }
++
++  listeners = EverDriveSocket::listen(host.c_str(), port.c_str());
++  if(listeners.empty()) {
++    print("EverDrive USB: cannot listen on ", host.c_str(), ":", port.c_str(), "\n");
++    return;
++  }
++  print("EverDrive USB: listening on ", host.c_str(), ":", port.c_str(),
++        packets ? " (UNFLoader packets)" : " (raw ED64 USB stream)", "\n");
++}
++
++auto Cartridge::EverDrive::unload() -> void {
++  disconnect();
++  if(pending >= 0) EverDriveSocket::close(pending);
++  pending = -1;
++  outbound = false;
++  for(auto fd : listeners) EverDriveSocket::close(fd);
++  listeners.clear();
++  sdram.clear();
++  sdram.shrink_to_fit();
++}
++
++auto Cartridge::EverDrive::power(bool reset) -> void {
++  unlocked = active = reading = piSdram = false;
++  sysConfig = counter = piOffset = readLatch = 0;
++  readLatchOffset = ~0u;
++  writeLatch = 0;
++  memset(buffer, 0, sizeof(buffer));
++}
++
++auto Cartridge::EverDrive::disconnect() -> void {
++  if(client >= 0) {
++    EverDriveSocket::close(client);
++    if(!outbound) print("EverDrive USB: PC disconnected\n");
++    else {
++      print("EverDrive USB: disconnected from ", host.c_str(), ":", port.c_str(), "\n");
++      connectRetry = EverDriveSocket::milliseconds() + 1000;
++    }
++  }
++  client = -1;
++  rx.clear(); tx.clear(); inbox.clear(); outbox.clear();
++  rxHead = txHead = 0;
++}
++
++//outbound mode: starts, completes or retries the connection to the PC program.
++//Tries each address host resolves to in turn; once all have failed, waits a second.
++auto Cartridge::EverDrive::connectOut() -> void {
++  auto now = EverDriveSocket::milliseconds();
++  if(pending < 0) {
++    if(now < connectRetry) return;
++    pending = EverDriveSocket::connect(host.c_str(), port.c_str(), addressIndex);
++    if(pending == -2) {  //every address tried (or host did not resolve)
++      pending = -1;
++      addressIndex = 0;
++      connectRetry = now + 1000;
++      return;
++    }
++    if(pending < 0) { addressIndex++; return; }  //failed at once: the next address on the next call
++    connectStart = now;
++  }
++  auto state = EverDriveSocket::connected(pending);
++  if(state == 0 && now - connectStart < 5000) return;  //still connecting
++  if(state <= 0) {  //refused or timed out
++    EverDriveSocket::close(pending);
++    pending = -1;
++    addressIndex++;
++    return;
++  }
++  client = pending;
++  pending = -1;
++  addressIndex = 0;
++  print("EverDrive USB: connected to ", host.c_str(), ":", port.c_str(), "\n");
++}
++
++//frame: called once per frame by System::run(), also sends a partly written raw packet
++auto Cartridge::EverDrive::service(bool frame) -> void {
++  if(frame && !packets && !outbox.empty()) {
++    tx.insert(tx.end(), outbox.begin(), outbox.end());
++    outbox.clear();
++  }
++  if(client < 0) {
++    if(outbound) connectOut();
++    else for(auto fd : listeners) {
++      if((client = EverDriveSocket::accept(fd)) < 0) continue;
++      print("EverDrive USB: PC connected\n");
++      break;
++    }
++    if(client < 0) return;
++  }
++
++  while(txHead < tx.size()) {
++    auto sent = EverDriveSocket::send(client, tx.data() + txHead, tx.size() - txHead);
++    if(sent > 0) { txHead += sent; continue; }
++    if(sent == 0) break;
++    return disconnect();
++  }
++  if(txHead == tx.size() || txHead >= 65536) tx.erase(tx.begin(), tx.begin() + txHead), txHead = 0;
++
++  u8 chunk[4096];
++  while(rx.size() - rxHead < EDFifoLimit) {
++    auto received = EverDriveSocket::recv(client, chunk, sizeof(chunk));
++    if(received > 0) { if(!receive(chunk, received)) return disconnect(); continue; }
++    if(received == 0) break;
++    return disconnect();
++  }
++}
++
++//PC -> N64 FIFO
++auto Cartridge::EverDrive::receive(const u8* data, u32 size) -> bool {
++  if(rxHead == rx.size() || rxHead >= 65536) rx.erase(rx.begin(), rx.begin() + rxHead), rxHead = 0;
++  if(!packets) {
++    rx.insert(rx.end(), data, data + size);
++    return true;
++  }
++  inbox.insert(inbox.end(), data, data + size);
++  u32 used = 0;
++  while(inbox.size() - used >= 8) {
++    const u8* packet = inbox.data() + used;
++    u32 type = edRead32(packet), length = edRead32(packet + 4);
++    if(length > 0xff'ffff) { print("EverDrive USB: packet too large\n"); return false; }
++    if(inbox.size() - used < 8 + length) break;
++    if(type == 7) {  //TCPTEST: UNFLoader checking that the emulator is there
++      edWrite32(tx, type); edWrite32(tx, length);
++      tx.insert(tx.end(), packet + 8, packet + 8 + length);
++    } else if(type == 8) {
++      print("EverDrive USB: ignoring ROMUPLOAD, load the ROM in ares instead\n");
++    } else {
++      const u8 head[8] = {'D', 'M', 'A', '@', u8(type), u8(length >> 16), u8(length >> 8), u8(length)};
++      rx.insert(rx.end(), head, head + 8);
++      rx.insert(rx.end(), packet + 8, packet + 8 + length);
++      if(length & 1) rx.push_back(0);
++      static const u8 tail[4] = {'C', 'M', 'P', 'H'};
++      rx.insert(rx.end(), tail, tail + 4);
++    }
++    used += 8 + length;
++  }
++  inbox.erase(inbox.begin(), inbox.begin() + used);
++  return true;
++}
++
++//N64 FIFO -> PC
++auto Cartridge::EverDrive::transmit(const u8* data, u32 size) -> void {
++  if(client < 0) return;  //nobody is listening: the bytes are lost
++  if(!packets) {
++    //raw: a usb.c packet ("DMA@" header data "CMPH" [pad]) is sent in one piece once the
++    //N64 has written all of it, not block by block: split over several small sends, a
++    //packet can wait ~40 ms behind Nagle and delayed ACKs on a relay between ares and
++    //the PC program (seen with WSL's localhost forwarding). Bytes that are not usb.c
++    //framing are sent at once, and System::run() sends whatever is left every frame.
++    outbox.insert(outbox.end(), data, data + size);
++    u32 used = 0;
++    while(used < outbox.size()) {
++      const u8* packet = outbox.data() + used;
++      u32 left = outbox.size() - used;
++      if(memcmp(packet, "DMA@", std::min(left, 4u))) { used = outbox.size(); break; }
++      if(left < 8) break;
++      u32 length = edRead32(packet + 4) & 0xff'ffff;
++      u32 total = 8 + length + 4 + (length & 1);
++      if(left < total) break;
++      used += total;
++    }
++    tx.insert(tx.end(), outbox.begin(), outbox.begin() + used);
++    outbox.erase(outbox.begin(), outbox.begin() + used);
++    return;
++  }
++  outbox.insert(outbox.end(), data, data + size);
++  u32 used = 0;
++  while(outbox.size() - used >= 8) {
++    const u8* packet = outbox.data() + used;
++    if(memcmp(packet, "DMA@", 4)) { used++; continue; }  //resynchronize on the next header
++    u32 header = edRead32(packet + 4), length = header & 0xff'ffff;
++    u32 total = 8 + length + 4 + (length & 1);
++    if(outbox.size() - used < total) break;
++    if(!memcmp(packet + 8 + length, "CMPH", 4)) {
++      edWrite32(tx, header >> 24); edWrite32(tx, length);
++      tx.insert(tx.end(), packet + 8, packet + 8 + length);
++    }
++    used += total;
++  }
++  outbox.erase(outbox.begin(), outbox.begin() + used);
++}
++
++//moves bytes between the FIFOs and the FPGA buffer for an active transfer
++auto Cartridge::EverDrive::step() -> void {
++  if(!active) return;
++  if(reading) {
++    while(counter < 512 && rxHead < rx.size()) buffer[counter++] = rx[rxHead++];
++    if(counter >= 512) active = false;
++  } else {
++    if(client >= 0 && tx.size() - txHead >= EDFifoLimit) return;  //wait for the PC to drain
++    transmit(buffer + counter, 512 - counter);
++    counter = 512;
++    active = false;
++  }
++}
++
++auto Cartridge::EverDrive::readRegister(u32 offset) -> u32 {
++  switch(offset) {
++  case EDRegUsbCfg: {
++    service();
++    step();
++    u32 status = EDStatusPower;
++    if(active) status |= EDStatusActive;
++    if(rxHead == rx.size()) status |= EDStatusRxEmpty;
++    if(client >= 0 && tx.size() - txHead >= EDFifoLimit) status |= EDStatusTxFull;
++    return status;
++  }
++  case EDRegVersion: return EDVersionX7;
++  case EDRegSysCfg:  return sysConfig;
++  }
++  return 0;
++}
++
++auto Cartridge::EverDrive::writeRegister(u32 offset, u32 data) -> void {
++  switch(offset) {
++  case EDRegKey:    unlocked = u16(data) == 0xaa55; return;
++  case EDRegSysCfg: sysConfig = data; return;
++  case EDRegUsbCfg:
++    if(data & 0x8000) reading = data >> 10 & 1, active = data >> 9 & 1;  //latch direction and start
++    if(data & 0x4000) counter = data & 0x1ff;                             //latch buffer address
++    if(active) step(), service(), step();
++    return;
++  }
++}
++
++auto Cartridge::EverDrive::piAddress(u32 address, PIDeviceTiming) -> bool {
++  if(!enabled()) return false;
++  if(address >> 16 == 0x1f80) {
++    piOffset = address & 0xffff;
++    if(!unlocked && (piOffset & ~3) != EDRegKey) return false;
++    piSdram = false;
++    return true;
++  }
++  u32 romEnd = 0x1000'0000 + self.rom.size;
++  if(address >= romEnd && address < 0x1400'0000) {
++    if(sdram.empty()) sdram.resize(0x1400'0000 - romEnd);
++    piOffset = address - romEnd;
++    piSdram = true;
++    return true;
++  }
++  return false;
++}
++
++auto Cartridge::EverDrive::piReadHalf(PIDeviceTiming) -> maybe<u16> {
++  u32 offset = piOffset;
++  piOffset += 2;
++  if(piSdram) {
++    if(offset + 1 >= sdram.size()) return nothing;
++    return u16(sdram[offset] << 8 | sdram[offset + 1]);
++  }
++  if(offset >= EDRegUsbData && offset < EDRegUsbData + 512) {
++    offset -= EDRegUsbData;
++    return u16(buffer[offset] << 8 | buffer[offset + 1]);
++  }
++  if(!(offset & 2) || readLatchOffset != (offset & ~3)) {
++    readLatchOffset = offset & ~3;
++    readLatch = readRegister(readLatchOffset);
++  }
++  return u16(offset & 2 ? readLatch : readLatch >> 16);
++}
++
++auto Cartridge::EverDrive::piWriteHalf(u16 data, PIDeviceTiming) -> void {
++  u32 offset = piOffset;
++  piOffset += 2;
++  if(piSdram) {
++    if(offset + 1 < sdram.size()) sdram[offset] = data >> 8, sdram[offset + 1] = data;
++    return;
++  }
++  if(offset >= EDRegUsbData && offset < EDRegUsbData + 512) {
++    offset -= EDRegUsbData;
++    buffer[offset] = data >> 8;
++    buffer[offset + 1] = data;
++    return;
++  }
++  readLatchOffset = ~0u;
++  if(!(offset & 2)) { writeLatch = data; return; }
++  writeRegister(offset & ~3, writeLatch << 16 | data);
++}
+diff --git a/ares/n64/system/system.cpp b/ares/n64/system/system.cpp
+index 25b26ef..b5f39d4 100644
+--- a/ares/n64/system/system.cpp
++++ b/ares/n64/system/system.cpp
+@@ -85,6 +85,7 @@ auto System::run() -> void {
+     vulkan.load(node);
+     _vulkanNeedsLoad = false;
+   }
++  if(cartridge.everdrive.enabled()) cartridge.everdrive.service(true);
+   cpu.main();
+ }
+ 

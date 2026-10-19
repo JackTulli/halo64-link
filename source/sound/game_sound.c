@@ -445,6 +445,15 @@ long object_impulse_sound_new(
 	source.location.game_location.cluster_index = NONE;
 	if (track_object_impulse_sound(object_index, &attachment_data, &source))
 	{
+#ifdef HALO_LINK
+		{
+			/* (Halo 64 Link: the sound to the Nintendo 64 too, where it is
+			heard, port/linux/game/link_export.c) */
+			extern void link_export_sound(long definition_index, long object_index, real_point3d const *position, real scale);
+
+			link_export_sound(definition_index, object_index, &source.location.position, scale);
+		}
+#endif
 		source.scale = scale;
 		sound_index = sound_new_impulse(
 			definition_index,
@@ -478,6 +487,14 @@ long unattached_impulse_sound_new(
 	source.scale = scale;
 	source.spatialization_mode = _sound_spatialization_mode_absolute;
 	source.gain = 1.f;
+#ifdef HALO_LINK
+	{
+		/* (Halo 64 Link: the sound to the Nintendo 64 too) */
+		extern void link_export_sound(long definition_index, long object_index, real_point3d const *position, real scale);
+
+		link_export_sound(definition_index, NONE, &location->position, scale);
+	}
+#endif
 
 	return sound_new_impulse(
 		definition_index,

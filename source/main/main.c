@@ -3545,6 +3545,14 @@ void main_loop(
 					observer_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					collision_log_end_period();
 					game_engine_update_non_deterministic((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+#ifdef HALO_LINK
+					{
+						/* Halo 64 Link: the tick's frame to the Nintendo 64 (port/linux/game/link_export.c) */
+						void link_export_update(void);
+
+						link_export_update();
+					}
+#endif
 				}
 
 				if (main_globals.saving_map)

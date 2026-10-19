@@ -1232,6 +1232,15 @@ void hud_print_message(
 	short local_player_index,
 	wchar_t const *message_text)
 {
+#ifdef HALO_LINK
+	{
+		/* (Halo 64 Link: the message to the Nintendo 64's HUD too,
+		port/linux/game/link_export.c) */
+		extern void link_export_message(short local_player_index, wchar_t const *message_text);
+
+		link_export_message(local_player_index, message_text);
+	}
+#endif
 	if (local_player_index != NONE)
 	{
 		struct hud_messaging_datum_definition *datum =

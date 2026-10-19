@@ -549,6 +549,25 @@ boolean player_ui_get_path_to_local_player_profile_directory(
 	return FALSE;
 }
 
+#ifdef HALO_LINK
+/* Halo 64 Link (port/linux/game/link_director.c): the Nintendo 64 player's
+name as the local player's profile's, the name a game joined is given (an
+empty one: the game's own) */
+void player_ui_link_set_player_name(
+	short local_player_index,
+	wchar_t const *name)
+{
+	wchar_t *profile_name;
+
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+		return;
+	profile_name = player_ui_globals.local_players[local_player_index].profile.player_name;
+	ustrncpy(profile_name, name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1);
+	profile_name[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1] = 0;
+	return;
+}
+#endif
+
 void player_ui_get_active_player_profile(
 	short local_player_index,
 	void *profile)

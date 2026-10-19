@@ -707,6 +707,51 @@ void effect_delete(
 	return;
 }
 
+#ifdef HALO_LINK
+/* Halo 64 Link (port/linux/game/link_export.c): each new effect, its first
+location's place in the world, for the Nintendo 64 to make there; and the
+sounds an effect plays, which the N64's own copy plays (link_effect_sound) */
+void link_export_effect(long definition_index, long owner_object_index, long object_index,
+	real_point3d const *point, real_vector3d const *forward, real scale_a, real scale_b);
+extern int link_effect_sound;
+
+static void link_effect_created(
+	long effect_index)
+{
+	struct effect_datum *effect;
+	struct effect_location_datum *location;
+	real_point3d point;
+	real_vector3d forward;
+
+	if (effect_index == NONE)
+		return;
+	effect = effect_get(effect_index);
+	if (effect->location_datum_indices[0] == NONE)
+		return;
+	location = effect_location_get(effect->location_datum_indices[0]);
+	if (location->node_designator != NONE)
+	{
+		real_matrix4x3 *node_matrix;
+
+		/* (on the Link's own first-person weapon: the N64 makes its own) */
+		if (TEST_FLAG(location->node_designator, _effect_location_first_person_bit))
+			return;
+		node_matrix = effect_get_node_matrix(effect, location->node_designator);
+		if (!node_matrix)
+			return;
+		matrix4x3_transform_point(node_matrix, &location->matrix.position, &point);
+		matrix4x3_transform_normal(node_matrix, &location->matrix.forward, &forward);
+	}
+	else
+	{
+		point = location->matrix.position;
+		forward = location->matrix.forward;
+	}
+	link_export_effect(effect->definition_index, effect->owner_object_index, effect->object_index, &point, &forward,
+		effect->scale_a, effect->scale_b);
+}
+#endif
+
 long effect_new_attached_from_markers(
 	long definition_index,
 	long owner_object_index,
@@ -796,6 +841,10 @@ long effect_new_attached_from_markers(
 			sizeof(effect->location_datum_indices));
 		effect_build_locations(effect, effect_marker_list_get_markers_by_name);
 
+#ifdef HALO_LINK
+		/* (before its first update: one over at once is deleted by it) */
+		link_effect_created(effect_index);
+#endif
 		effect_update(effect_index, 0.0f);
 	}
 
@@ -878,6 +927,10 @@ long effect_new_unattached_from_markers(
 			sizeof(effect->location_datum_indices));
 		effect_build_locations(effect, effect_marker_list_get_markers_by_name);
 
+#ifdef HALO_LINK
+		/* (before its first update: one over at once is deleted by it) */
+		link_effect_created(effect_index);
+#endif
 		effect_update(effect_index, 0.0f);
 	}
 
@@ -955,6 +1008,10 @@ long effect_new_from_object(
 		if (force_local_player_index != NONE)
 			effect->local_player_index = force_local_player_index;
 
+#ifdef HALO_LINK
+		/* (before its first update: one over at once is deleted by it) */
+		link_effect_created(effect_index);
+#endif
 		effect_update(effect_index, 0.0f);
 	}
 
@@ -1641,6 +1698,9 @@ static void effect_generate_part(
 		}
 
 		case SOUND_DEFINITION_TAG:
+#ifdef HALO_LINK
+			link_effect_sound = TRUE;
+#endif
 			if (effect->object_index != NONE)
 			{
 				short node_index = instance->node_designator;
@@ -1670,6 +1730,9 @@ static void effect_generate_part(
 					&location,
 					scale);
 			}
+#ifdef HALO_LINK
+			link_effect_sound = FALSE;
+#endif
 			break;
 
 		case OBJECT_DEFINITION_TAG:

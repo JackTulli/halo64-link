@@ -984,6 +984,54 @@ static boolean should_track_object(
 	return result;
 }
 
+#ifdef HALO_LINK
+/* Halo 64 Link (port/linux/game/link_export.c): the units a local player's
+motion sensor shows now (the sensor's own rules: alive, and moving or
+firing), but the player's own and what it sits in, within the sensor's
+range of position: where each is, its blip's type and size. Returns how
+many, maximum at most. */
+int link_motion_sensor_blips(
+	short local_player_index,
+	real_point3d const *position,
+	real_point3d *positions,
+	char *types,
+	char *sizes,
+	int maximum)
+{
+	struct object_iterator iterator;
+	long player_index = local_player_get_player_index(local_player_index);
+	long own_unit = player_index != NONE ? player_get(player_index)->unit_index : NONE;
+	long own_ultimate = own_unit != NONE ? object_get_ultimate_parent(own_unit) : NONE;
+	real range = hud_globals->defaults.motion_sensor_range;
+	int count = 0;
+
+	object_iterator_new(&iterator, _object_mask_unit, TRUE);
+	while (object_iterator_next(&iterator) && count < maximum)
+	{
+		real_point3d center;
+		real radius, dx, dy;
+		struct motion_sensor_blip blip;
+
+		if (iterator.index == own_unit || iterator.index == own_ultimate ||
+			!should_track_object(iterator.index) || !should_draw_object(iterator.index))
+		{
+			continue;
+		}
+		object_get_bounding_sphere(iterator.index, &center, &radius);
+		dx = center.x - position->x;
+		dy = center.y - position->y;
+		if (dx * dx + dy * dy > range * range)
+			continue;
+		motion_sensor_blip_set_type_and_size(&blip, iterator.index, local_player_index);
+		positions[count] = center;
+		types[count] = blip.type;
+		sizes[count] = blip.size;
+		count++;
+	}
+	return count;
+}
+#endif
+
 /* January's only caller (render_motion_sensor) pushes a zero dword for the
  * second parameter and this body never reads it; its original name and
  * type are not recoverable (a long 0 and a real 0.0f emit identical bytes).

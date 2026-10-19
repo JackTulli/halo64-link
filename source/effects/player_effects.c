@@ -1241,6 +1241,18 @@ void player_effect_start(
 {
 	short local_player_index = player_get(player_index)->local_player_index;
 
+#ifdef HALO_LINK
+	{
+		/* (Halo 64 Link: a hit on the Nintendo 64's player -- its flash, shake,
+		sound and the indicators of where it came from -- shown there too,
+		port/linux/game/link_export.c) */
+		extern void link_export_damage(short local_player_index, struct damage_data const *damage,
+			real_vector3d const *direction, real scale, real total_damage);
+
+		link_export_damage(local_player_index, damage, direction, scale, total_damage);
+	}
+#endif
+
 	match_assert("c:\\halo\\SOURCE\\effects\\player_effects.c", 342, direction);
 
 	lock_global_random_seed();

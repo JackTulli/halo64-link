@@ -3101,6 +3101,57 @@ static boolean goal_matches_player(
 	return result;
 }
 
+#ifdef HALO_LINK
+/* Halo 64 Link (port/linux/game/link_export.c): the game's goals a player
+sees (a CTF game's flags, Oddball's ball, King's hill, Race's flags), as
+the HUD's nav points and the motion sensor show them: where, and the nav
+point; how the variant shows them (goal_radar 1: nav points, 0: the motion
+sensor) */
+long link_game_engine_goal_count(
+	void)
+{
+	return (long)NUMBEROF(global_goal);
+}
+
+boolean link_game_engine_visible_goal(
+	long player_index,
+	long goal_index,
+	real_point3d *position,
+	short *nav_index)
+{
+	struct netgame_goal const *goal;
+
+	if (!game_engine || player_index == NONE || goal_index < 0 || goal_index >= (long)NUMBEROF(global_goal))
+		return FALSE;
+	goal = &global_goal[goal_index];
+	if (!goal_matches_player(player_get(player_index), player_index, goal_index))
+		return FALSE;
+	*position = goal->position;
+	*nav_index = goal->nav_index;
+	return TRUE;
+}
+
+long link_game_engine_goal_radar(
+	void)
+{
+	return game_engine ? global_variant.universal_variant.goal_radar : 0;
+}
+
+/* the player a player aims at, as the name over the crosshair shows it
+(NONE: none) */
+long link_game_engine_target_player(
+	long player_index)
+{
+	struct player_datum *player = player_index != NONE ? player_get(player_index) : NULL;
+	long target_player_index;
+
+	if (!game_engine || !player || player->unit_index == NONE)
+		return NONE;
+	target_player_index = find_closest_player_index(player_index);
+	return target_player_index == player_index ? NONE : target_player_index;
+}
+#endif
+
 static boolean nearby_vehicle(
 	long player_index,
 	struct player_starting_location const *starting_location)

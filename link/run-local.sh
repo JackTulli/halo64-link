@@ -12,8 +12,8 @@
 # (port 1's controller: walk by default; link_input.c), LINK (the program).
 here=$(cd "$(dirname "$0")" && pwd)
 LINK=${LINK:-$here/../build/link-x86/halo64-link}
-DATA=${HALO_LINK_DATA:-/root/n64/online/link-data}
-MAPS=${HALO_LINK_MAPS:-/home/jack/halo-64/build/xbox/disc/maps}
+DATA=${HALO_LINK_DATA:-$HOME/.local/share/halo64-link}
+MAPS=${HALO_LINK_MAPS:?set HALO_LINK_MAPS to the folder of the Xbox maps (halo-64 makes them: build/xbox/disc/maps)}
 mkdir -p "$DATA/maps" "$DATA/saves"
 for map in "$MAPS"/*.map; do ln -sf "$map" "$DATA/maps/"; done
 cd "$DATA" || exit 1
