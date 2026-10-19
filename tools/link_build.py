@@ -58,7 +58,10 @@ LINK_PLATFORM_DIR = LINK_DIR / "platform"
 LINK_PLATFORM_SOURCES = [LINK_PLATFORM_DIR / "link_platform.c", LINK_PLATFORM_DIR / "link_input.c"]
 # and with the host's ABI: SDL's few utility functions and glibc's
 # backtrace, the server's
-LINK_NATIVE_SOURCES = [SERVER_PLATFORM_DIR / "sdl_headless.c", SERVER_PLATFORM_DIR / "backtrace.c"]
+# (and the N64's cable, link_cable.c: POSIX sockets, which the Xbox ABI's
+# units can't include beside the SDK's winsock declarations)
+LINK_NATIVE_SOURCES = [SERVER_PLATFORM_DIR / "sdl_headless.c", SERVER_PLATFORM_DIR / "backtrace.c",
+                       LINK_PLATFORM_DIR / "link_cable.c"]
 # the window, input and self-updater the Link has none of
 LINK_EXCLUDED = {
     "port/linux/src/sdl_platform.c",

@@ -3265,6 +3265,88 @@ boolean network_game_client_advertised_game_in_progress(
 		(network_game_client_advertised_versions[game_index].flags & HALO_PORT_ADVERTISED_IN_PROGRESS_FLAG) != 0;
 }
 
+#ifdef HALO_LINK
+/* Halo 64 Link (port/linux/game/link_director.c): the system link games
+found, for the Nintendo 64's list, the one it chose joined, and where the
+client is (its state's number: searching 0, joining 1, pregame 2, in a game
+3, after one 4; NONE without a client) */
+boolean network_game_client_available_game(
+	long index,
+	char *name,
+	long name_size,
+	char *map,
+	long map_size,
+	short *engine_type,
+	short *players,
+	short *most)
+{
+	struct network_game_client *client = global_network_game_client_get();
+	struct network_advertised_game *game;
+	char const *map_name;
+	long i;
+
+	if (!client || index < 0 || index >= MAXIMUM_NETWORK_ADVERTISED_GAMES || name_size < 1 || map_size < 1)
+		return FALSE;
+	game = &client->available_games[index];
+	if (!network_game_client_advertised_game_is_valid(game) || game->platform != network_game_get_local_platform())
+		return FALSE;
+	for (i = 0; i < name_size - 1 && i < NETWORK_GAME_NAME_LENGTH && game->game_name[i]; i++)
+		name[i] = game->game_name[i] >= 32 && game->game_name[i] < 127 ? (char)game->game_name[i] : '?';
+	name[i] = 0;
+	/* (the map's own name: the last part of its path) */
+	map_name = game->map.name;
+	for (i = 0; i < (long)sizeof(game->map.name) && game->map.name[i]; i++)
+	{
+		if (game->map.name[i] == '\\' || game->map.name[i] == '/')
+			map_name = &game->map.name[i + 1];
+	}
+	for (i = 0; i < map_size - 1 && (map_name - game->map.name) + i < (long)sizeof(game->map.name) && map_name[i]; i++)
+		map[i] = map_name[i];
+	map[i] = 0;
+	*engine_type = game->engine_type;
+	*players = (short)game->player_count;
+	*most = game->maximum_player_count;
+	return game->open;
+}
+
+boolean network_game_client_join_available_game(
+	long index)
+{
+	struct network_game_client *client = global_network_game_client_get();
+	struct network_advertised_game *game;
+	struct transport_address address = { { { 0 } } };
+	struct network_join_parameters join_parameters;
+
+	if (!client || client->state != _network_game_client_state_searching || client->join_in_progress ||
+		!client->connection || network_connection_connected(client->connection) ||
+		index < 0 || index >= MAXIMUM_NETWORK_ADVERTISED_GAMES)
+	{
+		return FALSE;
+	}
+	game = &client->available_games[index];
+	if (!network_game_client_advertised_game_is_valid(game) || game->platform != network_game_get_local_platform() ||
+		!game->open || !network_game_client_advertised_game_compatible(client, game, TRUE))
+	{
+		return FALSE;
+	}
+	csmemset(&join_parameters, 0, sizeof(join_parameters));
+	transport_client_start((XNADDR const *)&game->xnaddr, (XNKEY const *)&game->key,
+		(XNKID const *)&game->key_id, NETWORK_GAME_SERVER_PORT, &address);
+	if (!address.address.long_words[0] || !address.port)
+		return FALSE;
+	network_game_generate_join_game_token(join_parameters.join_token);
+	return network_game_client_initiate_join_game(client, game, &join_parameters, &address);
+}
+
+short network_game_client_state_number(
+	void)
+{
+	struct network_game_client *client = global_network_game_client_get();
+
+	return client ? (short)client->state : NONE;
+}
+#endif
+
 boolean network_game_client_join_first_available_game(
 	void)
 {

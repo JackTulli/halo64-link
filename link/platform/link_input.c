@@ -285,8 +285,33 @@ static void pipe_read(void)
 }
 
 /* port 1's controller this frame */
+#include "link_cable.h"
+
+/* the N64's controller on a port (link_cable.c), if it has sent one: 1 */
+static int cable_gamepad(int port, XINPUT_GAMEPAD *pad)
+{
+	unsigned short buttons;
+	unsigned char analog[8];
+	short sticks[4];
+	int i;
+
+	if (!link_cable_controller(port, &buttons, analog, sticks))
+		return 0;
+	memset(pad, 0, sizeof(*pad));
+	pad->wButtons = buttons;
+	for (i = 0; i < 8; i++)
+		pad->bAnalogButtons[i] = analog[i];
+	pad->sThumbLX = sticks[0];
+	pad->sThumbLY = sticks[1];
+	pad->sThumbRX = sticks[2];
+	pad->sThumbRY = sticks[3];
+	return 1;
+}
+
 static void source_gamepad(XINPUT_GAMEPAD *pad)
 {
+	if (cable_gamepad(0, pad))
+		return;
 	double t;
 
 	if (!link_input.checked)

@@ -3440,6 +3440,14 @@ void main_loop(
 
 			/* automated system link tests (port/linux/game/network_test.c) */
 			network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+#ifdef HALO_LINK
+			{
+				/* Halo 64 Link: what the Nintendo 64 asks for (port/linux/game/link_director.c) */
+				void link_director_update(boolean main_menu_loaded, real seconds);
+
+				link_director_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			}
+#endif
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)
 			{
