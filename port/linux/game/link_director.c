@@ -95,6 +95,8 @@ static struct
 	/* the game begun, its LOAD not yet sent; the N64 told to load it */
 	boolean load_pending, playing;
 	real score_seconds;
+	/* the main menu's map is the one loaded (this frame's) */
+	boolean main_menu_loaded;
 } director;
 
 /* the maps on the online cartridge (halo-64's port.json "maps": the
@@ -503,6 +505,13 @@ static void leave(void)
 	dispose_global_network_game_client();
 	dispose_global_network_game_server();
 	ui_widgets_close_all();
+	/* (from a game: back to the main menu, as the game's own Quit goes --
+	its map unloaded, the main menu's disposing the client again -- and
+	looking for games again once it is up, link_director_update. Without it
+	the Link stayed in the game's map, waiting for a main menu that never
+	came, and answered none of the N64's requests after) */
+	if (!director.main_menu_loaded)
+		main_goto_main_menu();
 	director.state = _link_waiting;
 	director.playing = director.load_pending = FALSE;
 	send_scores(FALSE, TRUE);
@@ -573,6 +582,7 @@ void link_director_update(
 {
 	short client_state;
 
+	director.main_menu_loaded = main_menu_loaded;
 	link_cable_update();
 	if (!link_cable_connected())
 	{
