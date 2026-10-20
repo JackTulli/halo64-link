@@ -9,9 +9,9 @@
 #                                    server ("Halo 64 test") and a bot
 #
 # It hosts nothing on the internet, reports nothing, downloads no maps and
-# opens no router ports. Everything runs with the 32-bit libraries in
-# link/lib32, so Ubuntu needs nothing installed. Ctrl+C, or closing this
-# window, stops it (only the processes started here).
+# opens no router ports. The programs are static (or run with the 32-bit
+# libraries in link/lib32), so Ubuntu needs nothing installed. Ctrl+C, or
+# closing this window, stops it (only the processes started here).
 KIT=$(cd "$(dirname "$0")/.." && pwd)
 DATA=$KIT/data
 # (the programs' own folders -- debug.txt, saves -- are in Linux's file system;
@@ -55,11 +55,17 @@ for map in ui bloodgulch; do
 	[ -f "$KIT/maps/$map.map" ] || fail "The maps folder has no $map.map ($KIT/maps): unpack the whole zip."
 done
 
-# the programs and their libraries, copied into Linux's file system (they
-# run from there, whatever the Windows folder allows)
-files=(halo64-link lib32/ld-linux.so.2 lib32/libc.so.6 lib32/libm.so.6)
+# the programs (and, for programs linked with glibc, their 32-bit loader
+# and libraries), copied into Linux's file system: they run from there,
+# whatever the Windows folder allows
+files=(halo64-link)
 [ "$MODE" = local ] && files+=(chupathingyce-server)
-[ -f "$KIT/link/lib32/libgcc_s.so.1" ] && files+=(lib32/libgcc_s.so.1)
+RUN=()
+if [ -f "$KIT/link/lib32/ld-linux.so.2" ]; then
+	files+=(lib32/ld-linux.so.2 lib32/libc.so.6 lib32/libm.so.6)
+	[ -f "$KIT/link/lib32/libgcc_s.so.1" ] && files+=(lib32/libgcc_s.so.1)
+	RUN=("$WORK/bin/lib32/ld-linux.so.2" --library-path "$WORK/bin/lib32")
+fi
 for f in "${files[@]}"; do
 	[ -f "$KIT/link/$f" ] || fail "link/$f is missing from the kit (unpack the whole zip; a kit made without the server has no test game)."
 	cmp -s "$KIT/link/$f" "$WORK/bin/$f" || cp -f "$KIT/link/$f" "$WORK/bin/$f" || fail "Could not copy link/$f to $WORK/bin."
@@ -77,6 +83,7 @@ start() {
 	if [ "$program" = chupathingyce-server ]; then
 		rm -rf "$WORK/$name/playlists"
 		cp -r "$KIT/link/playlists" "$WORK/$name/"
+		[ -f "$KIT/link/blocked_names.txt" ] && cp -f "$KIT/link/blocked_names.txt" "$WORK/$name/"
 	fi
 	(
 		cd "$WORK/$name" || exit 1
@@ -86,7 +93,7 @@ start() {
 		export HALO_NET_REPORT_GAMES=false HALO_NET_REPORT_EVENTS=false HALO_NET_MAP_DOWNLOADS=never
 		export HALO_NET_ALLOW_UPNP=false HALO_CRASH_REPORTS=no HALO_UPDATE_AUTO=false
 		export "$@"
-		exec "$WORK/bin/lib32/ld-linux.so.2" --library-path "$WORK/bin/lib32" "$WORK/bin/$program"
+		exec ${RUN[@]+"${RUN[@]}"} "$WORK/bin/$program"
 	) > "$DATA/$name.log" 2>&1 &
 	STARTED=$!
 	PIDS+=($STARTED)

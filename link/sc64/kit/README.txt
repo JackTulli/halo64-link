@@ -2,8 +2,8 @@ Halo 64 Online on a real N64 with a SummerCart64
 ================================================
 
 Everything needed is in this folder: the cartridge (halo-online.z64), Halo
-64 Link (the program that plays ChupathingyCE's games for the N64) with its
-32-bit Linux libraries and the Xbox maps, and the bridge between the
+64 Link (the program that plays ChupathingyCE's games for the N64, a Linux
+program that runs in WSL) with the Xbox maps, and the bridge between the
 SummerCart64's USB port and the Link. Nothing to install apart from
 Windows' own WSL.
 
@@ -35,8 +35,8 @@ What's in here
                          hosting on the internet
   sc64\sc64_bridge.exe   the bridge (sc64_bridge.py is its source: without
                          the .exe, play-sc64.bat runs the .py with Python 3)
-  link\                  Halo 64 Link, the test server, their 32-bit Linux
-                         libraries, and the scripts the .bat files run
+  link\                  Halo 64 Link, the test server, the scripts the .bat
+                         files run, and the licences (link\licenses)
   maps\                  the Xbox maps the Link and the server load
   data\                  logs (made on the first run)
 

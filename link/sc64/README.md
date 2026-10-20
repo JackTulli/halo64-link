@@ -31,6 +31,17 @@ link/sc64/make-kit.sh --rom ~/halo-64/build/n64/halo-online.z64 \
     --maps ~/halo-64/build/xbox/disc/maps --out ~/Halo64Online --zip
 ```
 
+Halo 64's ROM Builder (halo-64's releases) writes this folder itself, with
+the player's own maps and cartridge, when its Online cartridge is ticked:
+it carries a kit made with `--template` (no cartridge, no maps), built for
+any PC: the Link and the server static, on musl, with `configure.py
+--portable` (as ChupathingyCE's releases build their servers: an Alpine
+Linux x86 system, `tools/ci_build.py --alpine`, or a chroot of one), with
+`--notice` adding musl's COPYRIGHT and Python's LICENSE.txt to its
+`link/licenses/`. A Link built with the system's glibc (as above) brings
+that system's 32-bit loader and libraries instead, and is built for the
+building machine's processor unless configured `--portable`.
+
 `--bridge-exe` adds the bridge as a Windows program, so the PC doesn't need
 Python. Make it on Windows with PyInstaller:
 
