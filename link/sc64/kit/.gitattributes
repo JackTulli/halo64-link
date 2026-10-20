@@ -1,0 +1,4 @@
+# the kit's files keep the line endings their programs need on the PC
+*.bat text eol=crlf
+*.txt text eol=crlf
+*.sh text eol=lf

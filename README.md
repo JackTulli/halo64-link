@@ -1,3 +1,11 @@
+> **This is Halo 64 Link**, the computer side of
+> [Halo 64](https://github.com/JackTulli/halo-64)'s online play:
+> ChupathingyCE v0.7.5d built as a headless player for a Nintendo 64. How to
+> build and run it, and everything else online play needs (the cartridge,
+> the maps, the SummerCart64 bridge, a ready-to-run Windows kit):
+> **[`link/README.md`](link/README.md)**. The rest of this page is
+> ChupathingyCE's own README, as it was at v0.7.5d.
+
 <p align="center"><img src="docs/icon-160.png" width="120" alt=""></p>
 
 <h1 align="center">Chupathingy</h1>

@@ -16,20 +16,38 @@ flashcart USB port (`link/ares/`), or on a real SummerCart64 through a small
 bridge (`link/sc64/`). "Playing on the N64" below says how the two share the
 work.
 
+Everything needed to play online, and in what order (the cartridge's side
+is halo-64's `port/n64/docs/online/README.md`):
+
+1. **The cartridge**, `halo-online.z64`: built in
+   [halo-64](https://github.com/JackTulli/halo-64) (`ninja -f
+   build/n64/build.ninja online`), from your own Xbox disc's maps.
+2. **The Link**, from this repository (below), with the **same Xbox maps**
+   (`ui.map` and the 13 multiplayer maps: the cartridge's are converted from
+   them, and the Link names everything by their tag indices).
+3. **The cable**: a SummerCart64 and the bridge (`link/sc64/`; its
+   `make-kit.sh` packs all of it into one folder for a Windows PC), or, with
+   no flashcart, ares with an emulated cart USB port (`link/ares/`).
+
 ## Building
 
 On Linux (an x86 machine, or x86-64 with 32-bit glibc, as `ninja linux` and
-`ninja server-x86` need):
+`ninja server-x86` need). On Windows, in WSL 2: the same steps in Ubuntu,
+with the repository in WSL's own file system (not under `/mnt/c`).
 
 ```sh
+sudo apt install git python3 ninja-build clang lld gcc-multilib libc6-dev-i386
+git clone https://github.com/JackTulli/halo64-link ~/halo64-link
+cd ~/halo64-link
 python3 configure.py --release --pgo=off --lto=off
 ninja link-x86      # build/link-x86/halo64-link
+ninja server-x86    # build/server-x86/chupathingyce-server (for local test games)
 ```
 
 It is the 32-bit build, the one that plays the Xbox maps the cartridge's
 maps are converted from. Like the server it needs SDL's headers, never its
 library (tools/server_build.py fetches them once into
-`build/server/third_party`).
+`build/server/third_party`, so the first configure needs the internet).
 
 What the build adds (`tools/link_build.py`, called from `configure.py`):
 
@@ -181,8 +199,28 @@ ARES_N64_USB=connect:127.0.0.1:6466 ares --system "Nintendo 64" halo-online.z64
 For internet games run the Link with `HALO_NET_ONLINE=true` and without
 `HALO_NET_ADDRESS`/`HALO_NET_BROADCAST` (the game must play from the
 machine's own address); turn off what a player's machine would publish or
-report (`HALO_NET_LIST_GAMES=false HALO_NET_REPORT_GAMES=false
-HALO_NET_REPORT_EVENTS=false HALO_NET_ALLOW_UPNP=false`).
+report. A data folder of its own, with the maps:
+
+```sh
+mkdir -p ~/link-data/saves && ln -sfn ~/halo-64/build/xbox/disc/maps ~/link-data/maps
+cd ~/link-data
+HALO_SAVE_ROOT=~/link-data/saves HALO_NET_ONLINE=true \
+HALO_LINK_CABLE=listen:6466 HALO_LINK_INPUT=idle \
+HALO_NET_LIST_GAMES=false HALO_NET_PUBLIC_LOBBY=false HALO_NET_HOST_PUBLIC=false \
+HALO_NET_REPORT_GAMES=false HALO_NET_REPORT_EVENTS=false HALO_NET_MAP_DOWNLOADS=never \
+HALO_NET_ALLOW_UPNP=false HALO_CRASH_REPORTS=no HALO_UPDATE_AUTO=false \
+    ~/halo64-link/build/link-x86/halo64-link
+```
+
+then connect the N64: the SummerCart64 bridge (`link/sc64/README.md`), or
+ares as above. The N64's ONLINE screen lists the local network's games and
+halo.milenko.org's; R sets the player's name, A joins a game; in a game
+START shows the players and scores, START and Z together leave.
+
+On a Windows PC with a SummerCart64, `link/sc64/make-kit.sh` packs all of
+this -- the Link, the test server, their 32-bit libraries, the maps, the
+cartridge, the bridge -- into one folder whose `play-sc64.bat` starts it
+(in WSL 2, with nothing installed in Ubuntu).
 
 ## Where the Link hooks into the game
 
