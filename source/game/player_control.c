@@ -1269,6 +1269,16 @@ static void get_local_player_input_blob(
 								control->magnetism_level = 0.f;
 							}
 						}
+#ifdef HALO_LINK
+						{
+							/* (Halo 64 Link: the target's motion across the view, sent to
+							the Nintendo 64 with the magnetism level, whose look plays
+							them -- port/linux/game/link_export.c) */
+							extern real_euler_angles2d link_target_angular_velocity[];
+
+							link_target_angular_velocity[local_player_index] = target_angular_velocity;
+						}
+#endif
 						if (player_magnetism_flag && control->magnetism_level > 0.f &&
 							(fabs(clamped_yaw) > _real_epsilon ||
 							fabs(clamped_pitch) > _real_epsilon ||

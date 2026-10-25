@@ -594,7 +594,10 @@ DAMAGE goes at once.
            units), how goals are shown (1: the variant's goal_radar), the
            goals the player sees (count (1), each: where (3 x f32), the nav
            point (s16)), the motion sensor's blips (count (1), each: where
-           (3 x f32), type and size (1 + 1)) */
+           (3 x f32), type and size (1 + 1)), the aim's magnetism level (1,
+           x255) and its target's motion across the view (yaw and pitch, 2
+           x s16 over +-LINK_ANGULAR_RANGE radians a tick; the N64's look
+           plays them, as Halo's magnetism does) */
 
 #define LINK_CABLE_EFFECTS 74
 #define LINK_CABLE_SOUNDS 75
@@ -606,6 +609,12 @@ DAMAGE goes at once.
 #define EVENT_RANGE 100.0f
 #define HUD_GOALS 16
 #define HUD_BLIPS 16
+/* (the N64's port/n64/src/n64.h N64_ONLINE_ANGULAR_RANGE) */
+#define LINK_ANGULAR_RANGE 0.5f
+
+/* player_control.c's (HALO_LINK): each local player's aim assist target's
+motion across the view, the last tick's */
+real_euler_angles2d link_target_angular_velocity[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 
 /* effects.c's: set while an effect plays a sound (the effect carries it) */
 int link_effect_sound;
@@ -883,6 +892,9 @@ static void send_hud(void)
 		put_u8((unsigned long)(unsigned char)types[i]);
 		put_u8((unsigned long)(unsigned char)sizes[i]);
 	}
+	put_u8((unsigned long)PIN(control->magnetism_level * 255.0f, 0.0f, 255.0f));
+	put_unit(link_target_angular_velocity[0].yaw / LINK_ANGULAR_RANGE);
+	put_unit(link_target_angular_velocity[0].pitch / LINK_ANGULAR_RANGE);
 	link_cable_send(LINK_CABLE_HUD, export.packet, (int)export.length);
 }
 
